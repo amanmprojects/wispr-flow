@@ -1,0 +1,50 @@
+# WisprFlow configuration
+# path to the whisper ggml model (supports ~)
+model = ~/.local/share/wispr-flow/ggml-large-v3-turbo-q5_0.bin
+
+# whisper language: "en", "de", "zh", ... or "auto" (detection pass is slower and
+# can be less reliable on short clips; try it if your language is missing)
+language = en
+
+# pulse audio source: "" = default mic, "monitor" = what you hear
+# find names with: pactl list sources short
+source =
+
+# how the transcript gets into the focused app:
+#   paste = clipboard + paste shortcut (recommended, full unicode)
+#   type  = simulated typing via ydotool (ASCII only)
+insert_mode = paste
+
+# shortcut used to paste (evdev key names, e.g. ctrl+v, ctrl+shift+v)
+paste_combo = ctrl+v
+
+# whisper decoder threads
+whisper_threads = 4
+
+# discard recordings below this length (ms) / cap length (s)
+min_audio_ms = 300
+max_audio_s = 120
+
+# keep capturing this long after releasing the hotkey (protects word endings)
+stop_tail_ms = 350
+
+# cut long trailing silence before transcribing (reduces rare end-of-clip
+# hallucinations like a trailing "you", but can clip soft word endings - off by default)
+trim_trailing_silence = false
+
+# drop audio that is probably not speech
+no_speech_thold = 0.6
+logprob_thold = -1.0
+
+# desktop notifications / feedback beeps
+notify = true
+beep = true
+
+# capitalize the first letter of the transcript
+capitalize = true
+
+# restore the previous clipboard content after pasting
+restore_clipboard = true
+
+# also listen to virtual keyboards (only needed for automated testing)
+allow_virtual = false
