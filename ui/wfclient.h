@@ -33,6 +33,7 @@ signals:
 private slots:
     void onConnected();
     void onDisconnected();
+    void onError(QLocalSocket::LocalSocketError);
     void onReadyRead();
     void retryConnect();
 

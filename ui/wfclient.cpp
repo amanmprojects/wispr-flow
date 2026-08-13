@@ -5,6 +5,7 @@
 WfClient::WfClient(QObject *parent) : QObject(parent) {
     connect(&m_sock, &QLocalSocket::connected, this, &WfClient::onConnected);
     connect(&m_sock, &QLocalSocket::disconnected, this, &WfClient::onDisconnected);
+    connect(&m_sock, &QLocalSocket::errorOccurred, this, &WfClient::onError);
     connect(&m_sock, &QLocalSocket::readyRead, this, &WfClient::onReadyRead);
 }
 
@@ -21,6 +22,15 @@ void WfClient::onConnected() {
     m_connected = true;
     m_buf.clear();
     sendCommand("{\"cmd\":\"hello\"}");
+}
+
+void WfClient::onError(QLocalSocket::LocalSocketError) {
+    // a failed connect attempt (daemon still starting / not running) emits
+    // errorOccurred, not disconnected - without this the UI would sit on
+    // "offline" forever after a daemon restart. Keep retrying.
+    if (!m_connected) {
+        QTimer::singleShot(1500, this, &WfClient::retryConnect);
+    }
 }
 
 void WfClient::onDisconnected() {

@@ -56,7 +56,8 @@ You should see `ready — hold Ctrl+Win to dictate`. Hold **Ctrl+Win**, speak,
 release — the text appears at the cursor. The system tray icon shows the
 state (gray mic = idle, pulsing red = recording, purple spinner =
 transcribing, slashed = daemon offline) and each step pops up in Plasma's
-native OSD overlay; a beep and a notification confirm each step.
+native OSD overlay; a beep confirms each gesture and errors still arrive
+as desktop notifications.
 
 ## Testing without a microphone
 

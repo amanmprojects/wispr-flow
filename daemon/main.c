@@ -155,7 +155,7 @@ static void start_recording(App *a) {
     a->rec_started_ms = now_ms();
     log_msg("recording started (source '%s')", a->cfg.source[0] ? a->cfg.source : "default");
     if (a->cfg.beep) wf_beep(880, 60, 0.3);
-    notify(a, "Listening…", "Release Ctrl+Win to transcribe");
+    // no notify here: the UI shows a Plasma OSD popup for this state
     wf_socket_set_recording(a->sock, true);
     ui_state(a, "recording");
 }
