@@ -3,3 +3,5 @@ bin/
 models/*.bin
 models/.cache/
 *.o
+/nohup.out
+/1
