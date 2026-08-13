@@ -171,6 +171,9 @@ models/     downloaded ggml models
 test/       sample audio
 ```
 
+Also: `AGENTS.md` (agent/human maintenance guide — keep updated) and
+`CHANGELOG.md` (version history).
+
 ## Roadmap
 
 - [x] live transcription state overlay (tray + Plasma OSD)
