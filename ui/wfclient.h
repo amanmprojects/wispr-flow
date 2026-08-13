@@ -26,6 +26,7 @@ public:
 signals:
     void hello(const QByteArray &line);
     void stateChanged(const QString &state); // idle | recording | processing
+    void disconnected(); // daemon went away -> indicator should show offline
     void level(int v);
     void done(const DoneInfo &info);
 

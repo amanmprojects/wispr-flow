@@ -53,8 +53,10 @@ Start it once to test:
 ```
 
 You should see `ready — hold Ctrl+Win to dictate`. Hold **Ctrl+Win**, speak,
-release — the text appears at the cursor. A beep and a notification confirm
-each step.
+release — the text appears at the cursor. The system tray icon shows the
+state (gray mic = idle, pulsing red = recording, purple spinner =
+transcribing, slashed = daemon offline) and each step pops up in Plasma's
+native OSD overlay; a beep and a notification confirm each step.
 
 ## Testing without a microphone
 
@@ -85,16 +87,25 @@ Verify the transcription pipeline directly:
 
 ## The UI
 
-`wispr-flow-ui` (Qt6) is a WisprFlow-style companion:
+`wispr-flow-ui` (Qt6) is a WisprFlow-style companion. It uses **no floating
+windows** — the state lives in the shell itself, so it can never be hidden
+behind other windows and always stays in sync:
 
-* **floating pill** — always-on-top (KWin rule is written automatically);
-  idle shows the mic, holding the hotkey turns it into a **live waveform**,
-  transcribing shows a **spinner**; drag it anywhere, right-click for menus
+* **system tray icon** (StatusNotifierItem, drawn by the panel) — gray mic =
+  idle, **pulsing red** = recording, **purple spinner** = transcribing,
+  gray with a red slash = daemon offline; tooltip shows the last transcript;
+  left-click opens the last dictation, right-click for menus
+* **Plasma OSD popups** — the same overlay the system uses for
+  volume/brightness changes: “Listening…” on hold, “Transcribing…” while
+  the model runs, then the inserted text (or the error) when done
 * **Last dictation…** — shows the transcript, **replays the exact recording
   used** (to debug cut endings: if the replay ends mid-word, the cut is in the
   capture; if it ends cleanly, it's the model), and **retranscribes** it
 * **Settings…** — language, audio source, insert mode, capture tail, etc.
   (edits the config file; "Restart daemon" applies changes)
+
+On desktops without a system tray (e.g. GNOME without an extension) the UI
+falls back to a small floating pill with the same states and menus.
 
 The UI starts the daemon automatically when launched; the KDE autostart
 entry runs the UI. The daemon also guards against double instances (flock)
@@ -161,7 +172,8 @@ test/       sample audio
 
 ## Roadmap
 
-- [ ] live transcription preview overlay while recording
+- [x] live transcription state overlay (tray + Plasma OSD)
+- [ ] live transcript preview while recording (beyond the OSD state popup)
 - [ ] configurable hotkey combo (e.g. CapsLock hold)
 - [ ] auto-language punctuation prompt per language
 - [ ] systemd user service instead of autostart entry

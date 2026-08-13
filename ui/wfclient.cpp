@@ -25,6 +25,7 @@ void WfClient::onConnected() {
 
 void WfClient::onDisconnected() {
     m_connected = false;
+    emit disconnected();
     QTimer::singleShot(1500, this, &WfClient::retryConnect);
 }
 

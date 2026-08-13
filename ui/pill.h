@@ -1,4 +1,6 @@
 #pragma once
+// fallback floating pill, used only on desktops without a system tray
+// (on Plasma the Tray + Plasma OSD are used instead).
 // the slim floating pill: idle mic -> live waveform while recording ->
 // spinner while transcribing
 #include <QWidget>
