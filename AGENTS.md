@@ -90,9 +90,15 @@ cmake -B build/ui -S ui && cmake --build build/ui -j"$(nproc)"
 install -m755 build/ui/wispr-flow-ui ~/.local/bin/wispr-flow-ui
 ```
 
-Running: the UI autostarts the daemon (KDE autostart entry runs the UI).
-The daemon can also run standalone (`~/.local/bin/wispr-flow`); a lock file
-guards against double instances.
+Running: the daemon runs as a **systemd user service**
+(`scripts/wispr-flow.service`, installed to `~/.config/systemd/user/`,
+enabled via `WantedBy=graphical-session.target`): it starts with the
+graphical session, `Restart=on-failure` (RestartSec=2), and logs to the
+journal (`journalctl --user -u wispr-flow -f`). The UI (KDE autostart
+entry) connects to the daemon socket; if no systemd user session is
+available the UI falls back to spawning the daemon itself (800 ms check)
+— the daemon's flock guard (`daemon.lock`) makes a duplicate instance
+exit harmlessly. The daemon can also run standalone.
 
 ## Testing
 
@@ -117,9 +123,18 @@ or check `ss -xanp | grep wispr-flow.sock` for the ESTAB connection.
 - **`kill %1` job specs do not work in non-interactive shells** — the kill
   fails silently and `wispr-inject hold` keeps the keys held, which makes the
   daemon record for minutes. Always kill by explicit PID in scripts.
-- The UI **does not restart a daemon that dies mid-session** (autostart only
-  runs at UI startup). It shows offline and reconnects when the daemon
-  returns. Restart via tray menu → "Restart daemon" or pkill + relaunch.
+- The UI **does not restart a daemon that dies mid-session** — with the
+  systemd service, `Restart=on-failure` handles crashes; the UI shows
+  "offline" and reconnects when the daemon returns. Without systemd, use
+  tray menu → "Restart daemon" or pkill + relaunch.
+- **Daemon logs**: as a systemd service they go to the journal
+  (`journalctl --user -u wispr-flow -f`). When the UI spawns the daemon
+  (fallback), logs inherit the UI's stderr — which in an autostart session
+  is typically /dev/null, i.e. lost. Debug via the journal or run the
+  daemon in a terminal.
+- **`After=graphical-session.target` in the service unit is deliberate**:
+  the daemon needs `WAYLAND_DISPLAY` etc., which Plasma imports into the
+  user manager only when the graphical session starts.
 - Restarting the daemon is required for config changes to take effect.
 - KWin on Wayland ignores Qt's always-on-top flag; the old pill needed a
   hand-written kwinrulesrc rule (removed — do not reintroduce).

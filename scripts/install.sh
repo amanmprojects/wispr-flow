@@ -52,14 +52,38 @@ Terminal=false
 X-KDE-autostart-after=panel
 X-KDE-autostart-phase=2
 EOF
-echo "==> autostart: $HOME/.config/autostart/wispr-flow.desktop (UI + daemon)"
+echo "==> autostart: $HOME/.config/autostart/wispr-flow.desktop (UI; starts the daemon as a fallback)"
+
+# 7. systemd user service: journald logging + auto-restart on crash.
+#    The UI's own daemon-spawn fallback stays in place for desktops/sessions
+#    without systemd (the daemon's flock guard makes a duplicate harmless).
+if command -v systemctl >/dev/null 2>&1 \
+   && systemctl --user show-environment >/dev/null 2>&1; then
+    mkdir -p "$HOME/.config/systemd/user"
+    install -m644 scripts/wispr-flow.service "$HOME/.config/systemd/user/wispr-flow.service"
+    systemctl --user daemon-reload
+    systemctl --user enable wispr-flow.service
+    echo "==> systemd user service enabled (starts with the graphical session)"
+    if systemctl --user is-active wispr-flow.service >/dev/null 2>&1; then
+        echo "==> daemon already running as a service"
+    elif pgrep -x wispr-flow >/dev/null 2>&1; then
+        echo "==> NOTE: an unsystemd daemon instance is still running."
+        echo "    Hand it over to the service:"
+        echo "    pkill -x wispr-flow && systemctl --user start wispr-flow"
+    else
+        systemctl --user start wispr-flow.service || true
+    fi
+else
+    echo "==> no systemd user session detected - the UI will start the daemon itself"
+fi
 
 echo
 echo "All done! Next steps:"
 echo "  1. make sure the system setup ran:    sudo ./scripts/setup.sh"
 echo "  2. log out/in if you just added the uinput group"
-echo "  3. start the UI (it starts the daemon):  $HOME/.local/bin/wispr-flow-ui"
+echo "  3. start the UI:  $HOME/.local/bin/wispr-flow-ui"
 echo "     (or log out and back in - it autostarts with KDE)"
 echo "  4. hold Ctrl+Win, speak, release - the transcript is pasted into"
 echo "     whatever has focus. Right-click the tray icon for debug/settings."
 echo "  5. test without a mic: set source = monitor in Settings or the config"
+echo "  6. daemon logs (systemd):  journalctl --user -u wispr-flow -f"

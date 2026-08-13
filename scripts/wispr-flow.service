@@ -1,0 +1,33 @@
+# WisprFlow dictation daemon - systemd user unit.
+#
+# Benefits over the plain autostart flow:
+#   * starts automatically with the graphical session
+#   * restarts on crash (Restart=on-failure)
+#   * logs to the journal:  journalctl --user -u wispr-flow -f
+#
+# The UI (wispr-flow-ui) still runs from the KDE autostart entry and connects
+# to the daemon's socket; if no systemd user session is available (or the
+# service is disabled) the UI falls back to spawning the daemon itself - the
+# daemon's flock guard makes a duplicate instance exit harmlessly.
+#
+# Manual install:
+#   install -Dm644 scripts/wispr-flow.service -t ~/.config/systemd/user
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now wispr-flow.service
+
+[Unit]
+Description=WisprFlow dictation daemon
+# start only after the graphical session imported its environment
+# (WAYLAND_DISPLAY etc.) - the daemon needs it for wl-copy/notify-send
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/wispr-flow
+Restart=on-failure
+RestartSec=2
+# stdout/stderr go to the journal (default for user services)
+
+[Install]
+WantedBy=graphical-session.target

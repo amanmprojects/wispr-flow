@@ -44,7 +44,9 @@ sudo ./scripts/setup.sh
 
 `install.sh` builds whisper.cpp + the daemon, downloads the
 `large-v3-turbo` model (~0.6 GB) into `models/`, installs the binary to
-`~/.local/bin`, writes a default config and a KDE autostart entry.
+`~/.local/bin`, writes a default config and a KDE autostart entry, and
+installs a `systemd --user` service for the daemon (journald logging,
+auto-restart on crash — see `scripts/wispr-flow.service`).
 
 Start it once to test:
 
@@ -108,9 +110,14 @@ behind other windows and always stays in sync:
 On desktops without a system tray (e.g. GNOME without an extension) the UI
 falls back to a small floating pill with the same states and menus.
 
-The UI starts the daemon automatically when launched; the KDE autostart
-entry runs the UI. The daemon also guards against double instances (flock)
-and saves every recording to `~/.local/state/wispr-flow/last.wav`.
+The daemon runs as a **systemd user service** (`systemctl --user status
+wispr-flow`): it starts with the graphical session, restarts on crash, and
+logs to the journal (`journalctl --user -u wispr-flow -f`). The KDE
+autostart entry runs the UI; if no systemd user session is available the
+UI falls back to starting the daemon itself (the daemon's flock guard makes
+a duplicate instance harmless). The daemon also guards against double
+instances (flock) and saves every recording to
+`~/.local/state/wispr-flow/last.wav`.
 
 ## Configuration
 
@@ -156,7 +163,8 @@ options. Highlights:
   clips; speak a little longer or check the mic level.
 * **Debugging** — `WISPR_SAVE_REC=/tmp/rec.wav wispr-flow` saves every
   raw recording, and `bin/wispr-inject ctrl+win hold` simulates the hotkey
-  gesture for scripted tests.
+  gesture for scripted tests. Daemon logs go to the journal when run as a
+  service: `journalctl --user -u wispr-flow -f`.
 * **Transcript appears in the wrong app** — the paste goes to whichever
   window has focus; make sure it accepts Ctrl+V (a few terminals don't —
   set `insert_mode = type` or `paste_combo = ctrl+shift+v`).
@@ -176,9 +184,5 @@ Also: `AGENTS.md` (agent/human maintenance guide — keep updated) and
 
 ## Roadmap
 
-- [x] live transcription state overlay (tray + Plasma OSD)
-- [ ] live transcript preview while recording (beyond the OSD state popup)
-- [ ] configurable hotkey combo (e.g. CapsLock hold)
-- [ ] auto-language punctuation prompt per language
-- [ ] systemd user service instead of autostart entry
-- [ ] KDE Klipper DBus fallback for the clipboard (no wl-clipboard needed)
+Deferred work lives in [`roadmap.md`](roadmap.md) (automated tests, hotkey
+state-machine hardening, configurable hotkey, live transcript preview, …).

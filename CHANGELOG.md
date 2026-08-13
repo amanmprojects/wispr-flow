@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `systemd --user` service for the daemon (`scripts/wispr-flow.service`):
+  starts with the graphical session, restarts on crash (`Restart=on-failure`),
+  and logs to the journal (`journalctl --user -u wispr-flow -f`) instead of
+  losing output to /dev/null. `install.sh` installs and enables it; the
+  UI's own daemon-spawn fallback remains for sessions without systemd.
+- `roadmap.md` tracking deferred work (automated tests, hotkey state-machine
+  hardening, configurable hotkey, live transcript preview, …).
+
 ## [0.1.0] - 2026-08-14
 
 First tracked release. History before this date was not changelogged.
