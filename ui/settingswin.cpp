@@ -163,6 +163,7 @@ bool SettingsWin::save() {
             kept << it.key() + " = " + it.value();
 
     f.resize(0);
+    f.seek(0);
     QTextStream out(&f);
     out << kept.join('\n') << '\n';
     f.close();

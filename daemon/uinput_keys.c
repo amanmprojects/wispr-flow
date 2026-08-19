@@ -10,17 +10,18 @@
 
 #define UK_MSLEEP(ms) usleep((ms) * 1000)
 
-static void ev_key(int fd, unsigned int code, int value) {
+static int ev_key(int fd, unsigned int code, int value) {
     struct input_event ev;
     memset(&ev, 0, sizeof(ev));
     ev.type = EV_KEY;
     ev.code = code;
     ev.value = value;
-    if (write(fd, &ev, sizeof(ev)) < 0) return;
+    if (write(fd, &ev, sizeof(ev)) < 0) return -1;
     memset(&ev, 0, sizeof(ev));
     ev.type = EV_SYN;
     ev.code = SYN_REPORT;
-    if (write(fd, &ev, sizeof(ev)) < 0) return;
+    if (write(fd, &ev, sizeof(ev)) < 0) return -1;
+    return 0;
 }
 
 int uk_open(const char *name) {
@@ -61,12 +62,12 @@ void uk_close(int fd) {
 int uk_tap(int fd, const int *down, int n_down, const int *up, int n_up) {
     if (fd < 0) { errno = EBADF; return -1; }
     for (int i = 0; i < n_down; i++) {
-        ev_key(fd, down[i], 1);
+        if (ev_key(fd, down[i], 1) < 0) return -1;
         UK_MSLEEP(15);
     }
     UK_MSLEEP(30);
     for (int i = 0; i < n_up; i++) {
-        ev_key(fd, up[i], 0);
+        if (ev_key(fd, up[i], 0) < 0) return -1;
         UK_MSLEEP(15);
     }
     return 0;
@@ -123,15 +124,15 @@ int uk_type_text(int fd, const char *text) {
         const CharMap *m = char_lookup(*p);
         if (!m) return -2; // untypable character
         if (m->shift) {
-            ev_key(fd, KEY_LEFTSHIFT, 1);
+            if (ev_key(fd, KEY_LEFTSHIFT, 1) < 0) return -1;
             UK_MSLEEP(8);
         }
-        ev_key(fd, m->code, 1);
+        if (ev_key(fd, m->code, 1) < 0) return -1;
         UK_MSLEEP(8);
-        ev_key(fd, m->code, 0);
+        if (ev_key(fd, m->code, 0) < 0) return -1;
         if (m->shift) {
             UK_MSLEEP(8);
-            ev_key(fd, KEY_LEFTSHIFT, 0);
+            if (ev_key(fd, KEY_LEFTSHIFT, 0) < 0) return -1;
         }
         UK_MSLEEP(6);
     }

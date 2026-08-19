@@ -232,8 +232,8 @@ int16_t *wf_load_wav(const char *path, size_t *n, char *errbuf, size_t errsz) {
         }
         off += 8 + csz + (csz & 1);
     }
-    if (!fmt_ok || !data || !data_len || channels == 0 || rate == 0) {
-        free(raw); snprintf(errbuf, errsz, "incomplete wav file"); return NULL;
+    if (!fmt_ok || !data || !data_len || channels == 0 || rate == 0 || bits == 0 || (bits % 8) != 0) {
+        free(raw); snprintf(errbuf, errsz, "incomplete or invalid wav file"); return NULL;
     }
     if (fmt_code != 1 && fmt_code != 3) {
         free(raw); snprintf(errbuf, errsz, "unsupported wav encoding %u", fmt_code);

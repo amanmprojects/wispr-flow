@@ -140,6 +140,23 @@ or check `ss -xanp | grep wispr-flow.sock` for the ESTAB connection.
   hand-written kwinrulesrc rule (removed — do not reintroduce).
 - `ui/wfclient.cpp` must connect `QLocalSocket::errorOccurred` — without it
   the UI sits on "daemon offline" forever (fixed in 67e0242; keep it that way).
+- **The daemon ignores SIGPIPE** (`signal(SIGPIPE, SIG_IGN)` in `main.c`):
+  without it, a write to a dead UI socket or a crashed `wl-copy` pipe would
+  terminate the daemon mid-transcription. Do not remove this.
+- **The UI and daemon must agree on the socket fallback path** when
+  `XDG_RUNTIME_DIR` is unset: both use `/tmp/wispr-flow-<uid>.sock`
+  (via `getuid()`). The UI previously used `applicationPid()`, which never
+  matched the daemon.
+- **`wf_socket.c` Client slots reuse a single `pthread_mutex_t`** initialized
+  once in `wf_socket_new`. Do not `memset` a `Client` struct on accept — only
+  reset `fd`/`len`/`buf`, or the mutex is corrupted.
+- **`hotkey.c rescan` rebuilds modifier state from scratch** (starts `false`,
+  ORs in `EVIOCGKEY` from open devices). Do not seed it from the previous
+  state — a keyboard unplugged while a modifier is held never sends key-up,
+  so the combo would stick forever.
+- **`ev_key`/`uk_tap`/`uk_type_text` propagate `write()` errors**. Do not
+  revert them to ignoring returns — silently-swallowed write failures make
+  paste appear to succeed when no key event reached the kernel.
 - `models/`, `bin/`, `build/`, `*.o` are gitignored; the model is symlinked
   into `~/.local/share/wispr-flow/`.
 - Recordings are saved to `~/.local/state/wispr-flow/last.wav` (overwritten

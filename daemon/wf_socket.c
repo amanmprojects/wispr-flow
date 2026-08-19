@@ -58,7 +58,17 @@ void wf_socket_free(WfSocket *s) {
 
 static void send_all(Client *c, const char *line) {
     pthread_mutex_lock(&c->lock);
-    (void)write(c->fd, line, strlen(line));
+    size_t total = strlen(line);
+    size_t off = 0;
+    while (off < total) {
+        ssize_t w = write(c->fd, line + off, total - off);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            break; // client gone or error - leave the rest; poll() will reap it
+        }
+        if (w == 0) break;
+        off += (size_t)w;
+    }
     pthread_mutex_unlock(&c->lock);
 }
 
@@ -150,8 +160,12 @@ static void *socket_thread(void *arg) {
                 pthread_mutex_lock(&s->broadcast_lock);
                 if (s->nclients < MAX_CLIENTS) {
                     Client *c = &s->clients[s->nclients++];
-                    memset(c, 0, sizeof(*c));
+                    // reset per-connection fields WITHOUT zeroing the mutex
+                    // (it was initialized once in wf_socket_new; zeroing it
+                    // corrupts the mutex on reuse / reconnect).
                     c->fd = fd;
+                    c->len = 0;
+                    c->buf[0] = 0;
                 } else {
                     close(fd);
                 }
@@ -166,7 +180,14 @@ static void *socket_thread(void *arg) {
             pthread_mutex_lock(&s->broadcast_lock);
             Client *c = find_client(s, pfds[i].fd);
             if (!c) { pthread_mutex_unlock(&s->broadcast_lock); continue; }
-            ssize_t r = read(c->fd, c->buf + c->len, sizeof(c->buf) - c->len - 1);
+            size_t avail = sizeof(c->buf) - c->len - 1;
+            if (avail == 0) {
+                // line too long (no newline within MAX_LINE) - reset the
+                // buffer instead of treating read(0)==0 as EOF/disconnect
+                c->len = 0;
+                avail = sizeof(c->buf) - c->len - 1;
+            }
+            ssize_t r = read(c->fd, c->buf + c->len, avail);
             if (r <= 0) {
                 close(c->fd);
                 int idx = find_client_index(s, pfds[i].fd);

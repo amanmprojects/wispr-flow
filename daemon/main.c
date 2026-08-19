@@ -7,8 +7,10 @@
 #include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "config.h"
 #include "hotkey.h"
@@ -60,11 +62,15 @@ static void log_msg(const char *fmt, ...) {
 
 static void notify(const App *a, const char *summary, const char *body) {
     if (!a->cfg.notify) return;
-    if (fork() == 0) {
+    pid_t pid = fork();
+    if (pid == 0) {
         setsid();
         execlp("notify-send", "notify-send", "-a", "WisprFlow",
                "-t", "2000", summary, body, (char *)NULL);
         _exit(127);
+    } else if (pid > 0) {
+        // reap the child so we don't accumulate zombies (notify-send is fast)
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
     }
 }
 
@@ -118,9 +124,9 @@ static void ui_state(App *a, const char *state) {
 
 static void ui_done(App *a, bool ok, const char *text, long rec_ms,
                     long whisper_ms, bool no_speech, const char *error) {
-    char text_esc[8192], err_esc[1024];
+    char text_esc[8192], err_esc[1024], path_esc[1024];
     // json escaping helper lives in wf_socket.c; do a minimal local escape here
-    char *te = text_esc, *ee = err_esc;
+    char *te = text_esc, *ee = err_esc, *pe = path_esc;
     for (const char *p = text ? text : ""; *p && te < text_esc + sizeof(text_esc) - 8; p++) {
         if (*p == '"' || *p == '\\') *te++ = '\\';
         *te++ = *p;
@@ -131,12 +137,17 @@ static void ui_done(App *a, bool ok, const char *text, long rec_ms,
         *ee++ = *p;
     }
     *ee = 0;
+    for (const char *p = a->last_wav; *p && pe < path_esc + sizeof(path_esc) - 8; p++) {
+        if (*p == '"' || *p == '\\') *pe++ = '\\';
+        *pe++ = *p;
+    }
+    *pe = 0;
     char line[16384];
     snprintf(line, sizeof(line),
              "{\"type\":\"done\",\"ok\":%s,\"text\":\"%s\",\"rec_ms\":%ld,"
              "\"whisper_ms\":%ld,\"no_speech\":%s,\"error\":\"%s\",\"path\":\"%s\"}",
              ok ? "true" : "false", text_esc, rec_ms, whisper_ms,
-             no_speech ? "true" : "false", err_esc, a->last_wav);
+             no_speech ? "true" : "false", err_esc, path_esc);
     wf_socket_broadcast(a->sock, line);
 }
 
@@ -413,6 +424,9 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+    // ignore SIGPIPE: a dead UI socket or a crashed wl-copy would otherwise
+    // terminate the daemon mid-transcription (write() to a broken pipe).
+    signal(SIGPIPE, SIG_IGN);
 
     fprintf(stderr, "wispr-flow: backend: %s\n", backend);
     log_msg("ready — hold Ctrl+Win to dictate (model %s)", app.cfg.model);

@@ -115,7 +115,7 @@ static char *resolve_source(const char *src) {
 }
 
 int rec_start(Rec *r, const char *source, char *errbuf, size_t errsz) {
-    if (r->stop_requested && r->pa) { snprintf(errbuf, errsz, "already recording"); return -1; }
+    if (r->pa) { snprintf(errbuf, errsz, "already recording"); return -1; }
     free(r->source);
     r->source = resolve_source(source);
     if (!r->source) { snprintf(errbuf, errsz, "out of memory"); return -1; }

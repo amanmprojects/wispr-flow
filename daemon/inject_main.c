@@ -25,7 +25,8 @@ static int lookup_mod(const char *name) {
 
 static int lookup_key(const char *name) {
     if (strlen(name) == 1 && name[0] >= 'a' && name[0] <= 'z') return 30 + (name[0] - 'a');
-    if (strlen(name) == 1 && name[0] >= '0' && name[0] <= '9') return 2 + (name[0] - '1');
+    if (strlen(name) == 1 && name[0] >= '1' && name[0] <= '9') return 2 + (name[0] - '1');
+    if (strlen(name) == 1 && name[0] == '0') return 11; // KEY_0
     if (!strcasecmp(name, "space")) return 57;
     if (!strcasecmp(name, "tab")) return 15;
     if (!strcasecmp(name, "enter")) return 28;

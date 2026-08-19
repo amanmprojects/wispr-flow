@@ -87,7 +87,11 @@ static int rescan(Hotkey *h) {
         if (h->devs[i].fd >= 0) close(h->devs[i].fd);
     h->ndevs = 0;
 
-    bool ctrl = h->ctrl_down, meta = h->meta_down;
+    // rebuild modifier state from scratch: start as "not down" and OR in only
+    // what the currently-open devices report. A keyboard unplugged while a
+    // modifier was held never sends a key-up event, so starting from the old
+    // state (and only ever OR-ing true) would leave the combo stuck forever.
+    bool ctrl = false, meta = false;
     int added = 0;
     for (int i = 0; i < 64; i++) {
         char path[64];

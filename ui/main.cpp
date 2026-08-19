@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QSystemTrayIcon>
+#include <unistd.h>
 
 #include "tray.h"
 #include "pill.h"
@@ -23,7 +24,8 @@
 static QString sockPath() {
     const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
     if (!runtime.isEmpty()) return runtime + "/wispr-flow.sock";
-    return QString("/tmp/wispr-flow-%1.sock").arg(QCoreApplication::applicationPid());
+    // must match the daemon's fallback (which uses getuid()), NOT the UI's pid
+    return QString("/tmp/wispr-flow-%1.sock").arg(getuid());
 }
 
 static QString daemonPath() {

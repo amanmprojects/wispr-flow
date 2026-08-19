@@ -165,8 +165,9 @@ static int insert_paste(const Config *cfg, const char *text, char *errbuf, size_
     usleep(600 * 1000); // let the app handle the paste
 
     if (old) {
-        if (set_clipboard(old, errbuf, errsz) != 0) {
-            fprintf(stderr, "wispr-flow: warning: could not restore clipboard: %s\n", errbuf);
+        char restore_err[256];
+        if (set_clipboard(old, restore_err, sizeof(restore_err)) != 0) {
+            fprintf(stderr, "wispr-flow: warning: could not restore clipboard: %s\n", restore_err);
         }
         free(old);
     }
