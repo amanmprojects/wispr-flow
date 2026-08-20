@@ -10,10 +10,9 @@
 static void expand_tilde(char *out, size_t outsz, const char *in) {
     if (in[0] == '~' && in[1] == '/') {
         const char *home = getenv("HOME");
-        if (home) {
-            snprintf(out, outsz, "%s%s", home, in + 1);
-            return;
-        }
+        if (!home || !home[0]) home = "/tmp";
+        snprintf(out, outsz, "%s%s", home, in + 1);
+        return;
     }
     snprintf(out, outsz, "%s", in);
 }
@@ -62,7 +61,7 @@ int config_load(Config *c, const char *path, char *errbuf, size_t errsz) {
         if (xdg && xdg[0]) snprintf(p, sizeof(p), "%s/wispr-flow/config", xdg);
         else {
             const char *home = getenv("HOME");
-            if (!home) { snprintf(errbuf, errsz, "HOME not set"); return -1; }
+            if (!home || !home[0]) home = "/tmp";
             snprintf(p, sizeof(p), "%s/.config/wispr-flow/config", home);
         }
     }
@@ -79,9 +78,13 @@ int config_load(Config *c, const char *path, char *errbuf, size_t errsz) {
     while (fgets(line, sizeof(line), f)) {
         lineno++;
         char *s = line;
-        // strip comments
-        char *hash = strchr(s, '#');
-        if (hash) *hash = 0;
+        // strip comments: '#' outside single/double quotes
+        bool in_squote = false, in_dquote = false;
+        for (char *q = s; *q; q++) {
+            if (!in_squote && !in_dquote && *q == '#') { *q = 0; break; }
+            if (*q == '\'' && !in_dquote) in_squote = !in_squote;
+            else if (*q == '"' && !in_squote) in_dquote = !in_dquote;
+        }
         // find '='
         char *eq = strchr(s, '=');
         if (!eq) {

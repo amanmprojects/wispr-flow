@@ -12,10 +12,10 @@ class Tray : public QObject {
 public:
     explicit Tray(QObject *parent = nullptr);
 
-    void setState(const QString &state);      // idle|recording|processing|offline
+    void setVisible(bool v);
+    void setState(const QString &state); // idle | recording | processing | offline
     void setBackend(const QString &backend) { m_backend = backend; }
     void setTranscribed(const QString &text) { m_lastText = text; }
-
 signals:
     void openDebug();
     void openSettings();

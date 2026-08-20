@@ -81,23 +81,41 @@ void wf_socket_broadcast(WfSocket *s, const char *json_line) {
     pthread_mutex_unlock(&s->broadcast_lock);
 }
 
+void wf_socket_set_status(WfSocket *s, const char *json) {
+    if (!s || !json) return;
+    pthread_mutex_lock(&s->broadcast_lock);
+    snprintf(s->status_json, sizeof(s->status_json), "%s", json);
+    pthread_mutex_unlock(&s->broadcast_lock);
+}
+
 void wf_socket_set_recording(WfSocket *s, bool recording) {
     if (!s) return;
+    pthread_mutex_lock(&s->broadcast_lock);
     s->recording = recording ? 1 : 0;
+    pthread_mutex_unlock(&s->broadcast_lock);
 }
 
 void wf_socket_set_level_source(WfSocket *s, const volatile int *level) {
     if (!s) return;
+    pthread_mutex_lock(&s->broadcast_lock);
     s->level_src = level;
+    pthread_mutex_unlock(&s->broadcast_lock);
 }
 
 bool wf_socket_take_retranscribe(WfSocket *s) {
     if (!s) return false;
-    if (s->retranscribe_pending) {
-        s->retranscribe_pending = 0;
-        return true;
-    }
-    return false;
+    pthread_mutex_lock(&s->broadcast_lock);
+    bool v = s->retranscribe_pending != 0;
+    if (v) s->retranscribe_pending = 0;
+    pthread_mutex_unlock(&s->broadcast_lock);
+    return v;
+}
+
+void wf_socket_requeue_retranscribe(WfSocket *s) {
+    if (!s) return;
+    pthread_mutex_lock(&s->broadcast_lock);
+    s->retranscribe_pending = 1;
+    pthread_mutex_unlock(&s->broadcast_lock);
 }
 
 static void handle_line(WfSocket *s, Client *c, const char *line) {
@@ -173,33 +191,56 @@ static void *socket_thread(void *arg) {
             }
         }
 
-        // process readable clients (briefly under the lock; reads return
-        // immediately since poll reported data)
+        // process readable clients: do NOT hold broadcast_lock across read()
+        // Snapshot fds are in pfds[1..nfds-1]; read without lock, then
+        // re-acquire lock to update per-client buffers.
         for (int i = 1; i < nfds; i++) {
             if (!(pfds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            int fd = pfds[i].fd;
+            // peek avail under lock to know how much we can read, then unlock
+            size_t avail;
             pthread_mutex_lock(&s->broadcast_lock);
-            Client *c = find_client(s, pfds[i].fd);
-            if (!c) { pthread_mutex_unlock(&s->broadcast_lock); continue; }
-            size_t avail = sizeof(c->buf) - c->len - 1;
+            Client *tmpc = find_client(s, fd);
+            if (!tmpc) { pthread_mutex_unlock(&s->broadcast_lock); continue; }
+            avail = sizeof(tmpc->buf) - tmpc->len - 1;
             if (avail == 0) {
-                // line too long (no newline within MAX_LINE) - reset the
-                // buffer instead of treating read(0)==0 as EOF/disconnect
-                c->len = 0;
-                avail = sizeof(c->buf) - c->len - 1;
+                tmpc->len = 0;
+                avail = sizeof(tmpc->buf) - 1;
             }
-            ssize_t r = read(c->fd, c->buf + c->len, avail);
+            pthread_mutex_unlock(&s->broadcast_lock);
+            // read without holding broadcast_lock
+            char tbuf[MAX_LINE];
+            if (avail > sizeof(tbuf)) avail = sizeof(tbuf);
+            ssize_t r = read(fd, tbuf, avail);
             if (r <= 0) {
-                close(c->fd);
-                int idx = find_client_index(s, pfds[i].fd);
+                pthread_mutex_lock(&s->broadcast_lock);
+                int idx = find_client_index(s, fd);
                 if (idx >= 0) {
-                    memmove(&s->clients[idx], &s->clients[idx + 1],
-                            (size_t)(s->nclients - idx - 1) * sizeof(Client));
+                    close(s->clients[idx].fd);
+                    // safe shift: keep mutexes in place, move only fd/len/buf
+                    for (int j = idx; j + 1 < s->nclients; j++) {
+                        s->clients[j].fd = s->clients[j + 1].fd;
+                        s->clients[j].len = s->clients[j + 1].len;
+                        memcpy(s->clients[j].buf, s->clients[j + 1].buf, sizeof(s->clients[j].buf));
+                    }
                     s->nclients--;
+                } else {
+                    close(fd);
                 }
                 pthread_mutex_unlock(&s->broadcast_lock);
                 continue;
             }
-            c->len += (size_t)r;
+            pthread_mutex_lock(&s->broadcast_lock);
+            Client *c = find_client(s, fd);
+            if (!c) { pthread_mutex_unlock(&s->broadcast_lock); continue; }
+            // re-check overflow (another thread could have appended, but only this thread does)
+            if ((size_t)r > sizeof(c->buf) - c->len - 1) {
+                c->len = 0;
+            }
+            size_t to_copy = (size_t)r;
+            if (to_copy > sizeof(c->buf) - c->len - 1) to_copy = sizeof(c->buf) - c->len - 1;
+            memcpy(c->buf + c->len, tbuf, to_copy);
+            c->len += to_copy;
             c->buf[c->len] = 0;
             char *nl;
             while ((nl = strchr(c->buf, '\n')) != NULL) {
@@ -213,15 +254,20 @@ static void *socket_thread(void *arg) {
             pthread_mutex_unlock(&s->broadcast_lock);
         }
 
-        // live audio levels while recording (~25 Hz); wf_socket_broadcast()
-        // takes the lock itself - call it only with the lock released
-        if (s->recording && s->level_src) {
+        // live audio levels while recording (~25 Hz); snapshot recording/level_src under lock
+        bool is_rec;
+        const volatile int *lvl_src;
+        pthread_mutex_lock(&s->broadcast_lock);
+        is_rec = s->recording != 0;
+        lvl_src = s->level_src;
+        pthread_mutex_unlock(&s->broadcast_lock);
+        if (is_rec && lvl_src) {
             struct timespec ts;
             clock_gettime(CLOCK_MONOTONIC, &ts);
             long ms = ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
             if (ms - last_level_ms >= 40) {
                 last_level_ms = ms;
-                int v = *s->level_src;
+                int v = *lvl_src;
                 if (v < 0) v = 0;
                 if (v > 1000) v = 1000;
                 char line[512];

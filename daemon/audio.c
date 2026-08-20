@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <pthread.h>
 #include <math.h>
 #include <pulse/simple.h>
 #include <pulse/error.h>
-
 #define SAMPLE_RATE 16000
 #define CHUNK_SAMPLES 320 // 20 ms
 
@@ -24,11 +24,11 @@ struct Rec {
 };
 
 static int level_from_rms(int32_t rms) {
-    // rms of int16 samples; map ~0..10000 to 0..1000
-    int v = rms * 25 / 256;
+    // rms of int16 samples; map ~0..10000 to 0..1000 — use 64-bit to avoid overflow
+    int64_t v = (int64_t)rms * 25 / 256;
     if (v < 0) v = 0;
     if (v > 1000) v = 1000;
-    return v;
+    return (int)v;
 }
 
 int rec_level(const Rec *r) { return r ? r->last_rms : 0; }
@@ -56,7 +56,11 @@ void rec_free(Rec *r) {
 static int append(Rec *r, const int16_t *chunk, size_t n) {
     if (r->n + n > r->cap) {
         size_t ncap = r->cap ? r->cap * 2 : 65536;
-        while (ncap < r->n + n) ncap *= 2;
+        while (ncap < r->n + n) {
+            if (ncap > SIZE_MAX / 2) return -1;
+            ncap *= 2;
+        }
+        if (ncap > SIZE_MAX / sizeof(int16_t)) return -1;
         int16_t *nd = realloc(r->data, ncap * sizeof(int16_t));
         if (!nd) return -1;
         r->data = nd;

@@ -14,10 +14,13 @@ void wf_socket_free(WfSocket *s);
 int wf_socket_start(WfSocket *s);
 // broadcast one JSON line to all clients (thread-safe)
 void wf_socket_broadcast(WfSocket *s, const char *json_line);
+// update the hello status json returned to new clients
+void wf_socket_set_status(WfSocket *s, const char *json);
 // tell the socket thread whether recording is active (for level events)
 void wf_socket_set_recording(WfSocket *s, bool recording);
 // pointer to an int (0..1000) the socket thread polls for live levels;
 // may be NULL to disable level events
 void wf_socket_set_level_source(WfSocket *s, const volatile int *level);
-// set when a client requested a retranscription of the last recording
 bool wf_socket_take_retranscribe(WfSocket *s);
+// re-queue a retranscribe request that was lost because state was busy
+void wf_socket_requeue_retranscribe(WfSocket *s);

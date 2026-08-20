@@ -34,6 +34,7 @@ typedef struct {
     char        last_wav[600];    // last_wav path (the exact recording used)
     char        status_json[2048];// sent to UI clients on connect
     char        err[512];
+    int         lock_fd;          // flock fd, -1 if not held
 } App;
 
 static volatile sig_atomic_t g_quit = 0;
@@ -116,6 +117,60 @@ static void save_wav(const char *path, const int16_t *samples, size_t n) {
 
 // --- UI events --------------------------------------------------------------
 
+static void json_escape(char *dst, size_t dstsz, const char *src) {
+    if (dstsz == 0) return;
+    char *d = dst;
+    char *end = dst + dstsz - 1;
+    for (const char *p = src ? src : ""; *p && d < end; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\\') {
+            if (d + 2 > end) break;
+            *d++ = '\\';
+            *d++ = c;
+        } else if (c == '\b') {
+            if (d + 2 > end) break;
+            *d++ = '\\'; *d++ = 'b';
+        } else if (c == '\f') {
+            if (d + 2 > end) break;
+            *d++ = '\\'; *d++ = 'f';
+        } else if (c == '\n') {
+            if (d + 2 > end) break;
+            *d++ = '\\'; *d++ = 'n';
+        } else if (c == '\r') {
+            if (d + 2 > end) break;
+            *d++ = '\\'; *d++ = 'r';
+        } else if (c == '\t') {
+            if (d + 2 > end) break;
+            *d++ = '\\'; *d++ = 't';
+        } else if (c < 0x20) {
+            if (d + 6 > end) break;
+            snprintf(d, 7, "\\u%04x", c);
+            d += 6;
+        } else {
+            *d++ = c;
+        }
+    }
+    *d = 0;
+}
+
+static void update_status_json(App *a) {
+    const char *st = a->st == S_RECORDING ? "recording" : (a->st == S_PROCESSING ? "processing" : "idle");
+    char backend_esc[512], lang_esc[64], model_esc[2048];
+    json_escape(backend_esc, sizeof(backend_esc), tr_backend());
+    json_escape(lang_esc, sizeof(lang_esc), a->cfg.language);
+    json_escape(model_esc, sizeof(model_esc), a->cfg.model);
+    int n = snprintf(a->status_json, sizeof(a->status_json),
+             "{\"type\":\"hello\",\"version\":\"%s\",\"backend\":\"%s\","
+             "\"lang\":\"%s\",\"model\":\"%s\",\"state\":\"%s\"}",
+             WF_VERSION, backend_esc, lang_esc, model_esc, st);
+    if (n < 0 || (size_t)n >= sizeof(a->status_json)) {
+        // truncated — ensure NUL termination and log
+        a->status_json[sizeof(a->status_json)-1] = 0;
+        fprintf(stderr, "wispr-flow: warning: status_json truncated\n");
+    }
+    if (a->sock) wf_socket_set_status(a->sock, a->status_json);
+}
+
 static void ui_state(App *a, const char *state) {
     char line[128];
     snprintf(line, sizeof(line), "{\"type\":\"state\",\"state\":\"%s\"}", state);
@@ -124,30 +179,20 @@ static void ui_state(App *a, const char *state) {
 
 static void ui_done(App *a, bool ok, const char *text, long rec_ms,
                     long whisper_ms, bool no_speech, const char *error) {
-    char text_esc[8192], err_esc[1024], path_esc[1024];
-    // json escaping helper lives in wf_socket.c; do a minimal local escape here
-    char *te = text_esc, *ee = err_esc, *pe = path_esc;
-    for (const char *p = text ? text : ""; *p && te < text_esc + sizeof(text_esc) - 8; p++) {
-        if (*p == '"' || *p == '\\') *te++ = '\\';
-        *te++ = *p;
-    }
-    *te = 0;
-    for (const char *p = error ? error : ""; *p && ee < err_esc + sizeof(err_esc) - 8; p++) {
-        if (*p == '"' || *p == '\\') *ee++ = '\\';
-        *ee++ = *p;
-    }
-    *ee = 0;
-    for (const char *p = a->last_wav; *p && pe < path_esc + sizeof(path_esc) - 8; p++) {
-        if (*p == '"' || *p == '\\') *pe++ = '\\';
-        *pe++ = *p;
-    }
-    *pe = 0;
-    char line[16384];
-    snprintf(line, sizeof(line),
+    char text_esc[16384], err_esc[2048], path_esc[2048];
+    json_escape(text_esc, sizeof(text_esc), text);
+    json_escape(err_esc, sizeof(err_esc), error);
+    json_escape(path_esc, sizeof(path_esc), a->last_wav);
+    char line[32768];
+    int n = snprintf(line, sizeof(line),
              "{\"type\":\"done\",\"ok\":%s,\"text\":\"%s\",\"rec_ms\":%ld,"
              "\"whisper_ms\":%ld,\"no_speech\":%s,\"error\":\"%s\",\"path\":\"%s\"}",
              ok ? "true" : "false", text_esc, rec_ms, whisper_ms,
              no_speech ? "true" : "false", err_esc, path_esc);
+    if (n < 0 || (size_t)n >= sizeof(line)) {
+        fprintf(stderr, "wispr-flow: warning: ui_done line truncated\n");
+        line[sizeof(line)-1]=0;
+    }
     wf_socket_broadcast(a->sock, line);
 }
 
@@ -167,6 +212,7 @@ static void start_recording(App *a) {
     log_msg("recording started (source '%s')", a->cfg.source[0] ? a->cfg.source : "default");
     if (a->cfg.beep) wf_beep(880, 60, 0.3);
     // no notify here: the UI shows a Plasma OSD popup for this state
+    update_status_json(a);
     wf_socket_set_recording(a->sock, true);
     ui_state(a, "recording");
 }
@@ -194,6 +240,7 @@ static void finish_recording(App *a, bool cancelled) {
         log_msg("error: %s", a->err);
         notify(a, "WisprFlow", "Recording failed");
         a->st = S_IDLE;
+        update_status_json(a);
         wf_socket_set_recording(a->sock, false);
         ui_state(a, "idle");
         ui_done(a, false, "", 0, 0, false, a->err);
@@ -202,6 +249,7 @@ static void finish_recording(App *a, bool cancelled) {
     long dur_ms = now_ms() - a->rec_started_ms;
     log_msg("recording stopped (%.1f s)", dur_ms / 1000.0);
     a->st = S_PROCESSING;
+    update_status_json(a);
     wf_socket_set_recording(a->sock, false);
     ui_state(a, "processing");
 
@@ -244,6 +292,7 @@ static void finish_recording(App *a, bool cancelled) {
     free(samples);
 
     a->st = S_IDLE;
+    update_status_json(a);
     ui_state(a, "idle");
     // user re-held the combo while we were busy
     if (hotkey_combo_active(a->hk)) start_recording(a);
@@ -252,7 +301,10 @@ static void finish_recording(App *a, bool cancelled) {
 // retranscribe the last saved recording (requested from the UI)
 static void retranscribe_last(App *a) {
     fprintf(stderr, "wispr-flow: retranscribe_last: st=%d last=%s\n", a->st, a->last_wav);
-    if (a->st != S_IDLE) return;
+    if (a->st != S_IDLE) {
+        wf_socket_requeue_retranscribe(a->sock);
+        return;
+    }
     if (access(a->last_wav, R_OK) != 0) {
         ui_done(a, false, "", 0, 0, false, "no recording saved yet");
         return;
@@ -265,6 +317,7 @@ static void retranscribe_last(App *a) {
         return;
     }
     a->st = S_PROCESSING;
+    update_status_json(a);
     ui_state(a, "processing");
     bool no_speech = false;
     double whisper_ms = 0;
@@ -283,6 +336,7 @@ static void retranscribe_last(App *a) {
         ui_done(a, false, "", dur_ms, 0, false, a->tr.err);
     }
     a->st = S_IDLE;
+    update_status_json(a);
     ui_state(a, "idle");
 }
 
@@ -338,16 +392,20 @@ int main(int argc, char **argv) {
     // NB: O_CLOEXEC is essential - forked children (wl-copy, notify-send) must
     // not inherit the lock fd, or the flock would outlive this process.
     make_state_dir(&app);
+    app.lock_fd = -1;
     int lock_fd = open(app.lock_path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
     if (lock_fd < 0 || flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+        if (lock_fd >= 0) close(lock_fd);
         fprintf(stderr, "wispr-flow: another instance is already running - exiting\n");
         return 1;
     }
+    app.lock_fd = lock_fd;
 
     Transcribe tr;
     if (tr_init(&tr, app.cfg.model) != 0) {
         fprintf(stderr, "wispr-flow: %s\n", tr.err);
         fprintf(stderr, "wispr-flow: run scripts/install.sh or set 'model' in the config\n");
+        close(app.lock_fd);
         return 1;
     }
 
@@ -358,6 +416,7 @@ int main(int argc, char **argv) {
         if (!wav) {
             fprintf(stderr, "wispr-flow: %s\n", err);
             tr_free(&tr);
+            close(app.lock_fd);
             return 1;
         }
         bool no_speech = false;
@@ -370,15 +429,18 @@ int main(int argc, char **argv) {
             fprintf(stderr, "wispr-flow: no speech detected\n");
             tr_free(&tr);
             free(wav);
+            close(app.lock_fd);
             return 2;
         } else {
             fprintf(stderr, "wispr-flow: %s\n", tr.err);
             tr_free(&tr);
             free(wav);
+            close(app.lock_fd);
             return 1;
         }
         free(wav);
         tr_free(&tr);
+        close(app.lock_fd);
         return 0;
     }
 
@@ -389,6 +451,7 @@ int main(int argc, char **argv) {
     if (!app.rec) {
         fprintf(stderr, "wispr-flow: out of memory\n");
         tr_free(&app.tr);
+        close(app.lock_fd);
         return 1;
     }
 
@@ -397,8 +460,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "wispr-flow: cannot open input devices\n");
         rec_free(app.rec);
         tr_free(&app.tr);
+        close(app.lock_fd);
         return 1;
     }
+
     hotkey_set_allow_virtual(app.hk, app.cfg.allow_virtual);
     hotkey_set_callback(app.hk, on_combo, &app);
     // NB: hotkey_set_callback may fire immediately if the combo is already held
@@ -409,11 +474,7 @@ int main(int argc, char **argv) {
     if (runtime && runtime[0]) snprintf(sock_path, sizeof(sock_path), "%s/wispr-flow.sock", runtime);
     else snprintf(sock_path, sizeof(sock_path), "/tmp/wispr-flow-%d.sock", (int)getuid());
     const char *backend = tr_backend();
-    snprintf(app.status_json, sizeof(app.status_json),
-             "{\"type\":\"hello\",\"version\":\"%s\",\"backend\":\"%s\","
-             "\"lang\":\"%s\",\"model\":\"%s\",\"state\":\"%s\"}",
-             WF_VERSION, backend, app.cfg.language, app.cfg.model,
-             app.st == S_RECORDING ? "recording" : (app.st == S_PROCESSING ? "processing" : "idle"));
+    update_status_json(&app);
     app.sock = wf_socket_new(sock_path, app.status_json);
     if (!app.sock || wf_socket_start(app.sock) != 0) {
         fprintf(stderr, "wispr-flow: warning: cannot start UI socket (%s)\n", sock_path);
@@ -421,7 +482,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "wispr-flow: UI socket: %s\n", sock_path);
     }
     wf_socket_set_level_source(app.sock, rec_level_src(app.rec));
-
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     // ignore SIGPIPE: a dead UI socket or a crashed wl-copy would otherwise
@@ -451,5 +511,6 @@ int main(int argc, char **argv) {
     rec_free(app.rec);
     hotkey_free(app.hk);
     tr_free(&app.tr);
+    if (app.lock_fd >= 0) close(app.lock_fd);
     return 0;
 }

@@ -60,8 +60,9 @@ static bool dev_ok(const char *name, int fd, bool allow_virtual) {
     unsigned long keybits[KEY_MAX / 64 + 1] = {0};
     if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits) < 0) return false;
 #define KEY_TEST(k) ((keybits[(k) / 64] & (1UL << ((k) % 64))) != 0)
-    // must be a real keyboard: has both Ctrl and Meta keys
-    if (!KEY_TEST(KEY_LEFTCTRL) || !KEY_TEST(KEY_LEFTMETA)) return false;
+    // must be a real keyboard: has Ctrl and Meta (either left or right)
+    if (!(KEY_TEST(KEY_LEFTCTRL) || KEY_TEST(KEY_RIGHTCTRL))) return false;
+    if (!(KEY_TEST(KEY_LEFTMETA) || KEY_TEST(KEY_RIGHTMETA))) return false;
     return true;
 }
 
@@ -204,6 +205,16 @@ int hotkey_poll(Hotkey *h, int timeout_ms) {
     if (r < 0) {
         if (errno == EINTR) return 0;
         return -1;
+    }
+    if (r > 0) {
+        bool need_rescan = false;
+        for (int i = 0; i < h->ndevs; i++) {
+            if (pfds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) need_rescan = true;
+        }
+        if (need_rescan) {
+            // force rescan sooner — device gone or error
+            h->last_rescan_ms = 0;
+        }
     }
     if (r == 0) return 0;
 

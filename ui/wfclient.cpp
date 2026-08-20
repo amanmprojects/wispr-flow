@@ -7,6 +7,14 @@ WfClient::WfClient(QObject *parent) : QObject(parent) {
     connect(&m_sock, &QLocalSocket::disconnected, this, &WfClient::onDisconnected);
     connect(&m_sock, &QLocalSocket::errorOccurred, this, &WfClient::onError);
     connect(&m_sock, &QLocalSocket::readyRead, this, &WfClient::onReadyRead);
+    m_retryTimer.setSingleShot(true);
+    connect(&m_retryTimer, &QTimer::timeout, this, &WfClient::retryConnect);
+    m_helloTimer.setSingleShot(true);
+    connect(&m_helloTimer, &QTimer::timeout, this, [this] {
+        if (!m_helloReceived && m_connected) {
+            qWarning("WfClient: no hello reply within 3s — daemon may be stale");
+        }
+    });
 }
 
 void WfClient::start(const QString &sockPath) {
@@ -14,35 +22,51 @@ void WfClient::start(const QString &sockPath) {
     retryConnect();
 }
 
+void WfClient::scheduleRetry() {
+    if (m_retryTimer.isActive()) return;
+    m_retryTimer.start(1500);
+}
+
 void WfClient::retryConnect() {
     if (!m_connected) m_sock.connectToServer(m_path);
+}
+
+void WfClient::flushQueue() {
+    while (!m_queue.isEmpty() && m_connected) {
+        const QByteArray cmd = m_queue.dequeue();
+        m_sock.write(cmd + "\n");
+    }
+    if (m_connected) m_sock.flush();
 }
 
 void WfClient::onConnected() {
     m_connected = true;
     m_buf.clear();
+    m_helloReceived = false;
+    m_helloTimer.start(3000);
     sendCommand("{\"cmd\":\"hello\"}");
+    flushQueue();
 }
 
 void WfClient::onError(QLocalSocket::LocalSocketError) {
-    // a failed connect attempt (daemon still starting / not running) emits
-    // errorOccurred, not disconnected - without this the UI would sit on
-    // "offline" forever after a daemon restart. Keep retrying.
     if (!m_connected) {
-        QTimer::singleShot(1500, this, &WfClient::retryConnect);
+        scheduleRetry();
     }
 }
 
 void WfClient::onDisconnected() {
     m_connected = false;
+    m_helloTimer.stop();
     emit disconnected();
-    QTimer::singleShot(1500, this, &WfClient::retryConnect);
+    scheduleRetry();
 }
 
 void WfClient::sendCommand(const QByteArray &cmd) {
     if (m_connected) {
         m_sock.write(cmd + "\n");
         m_sock.flush();
+    } else {
+        m_queue.enqueue(cmd);
     }
 }
 
@@ -56,6 +80,8 @@ void WfClient::onReadyRead() {
 
         const QString type = jsonGetString(line, "type");
         if (type == "hello") {
+            m_helloReceived = true;
+            m_helloTimer.stop();
             emit hello(line);
         } else if (type == "state") {
             emit stateChanged(jsonGetString(line, "state"));

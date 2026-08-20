@@ -5,6 +5,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QFile>
+#include <QSaveFile>
 #include <QTextStream>
 #include <QDesktopServices>
 #include <QUrl>
@@ -36,17 +37,33 @@ SettingsWin::SettingsWin() {
     m_minMs->setSuffix(" ms");
 
     m_beep = new QCheckBox("Feedback beeps", this);
+    m_beep->setAccessibleDescription("Play a short beep when dictation starts and stops");
     m_notify = new QCheckBox("Desktop notifications", this);
+    m_notify->setAccessibleDescription("Show desktop notification when dictation is inserted or fails");
     m_capitalize = new QCheckBox("Capitalize first letter", this);
+    m_capitalize->setAccessibleDescription("Automatically capitalize the first letter of dictated text");
     m_trimTrailing = new QCheckBox("Trim long trailing silence (may clip soft endings)", this);
+    m_trimTrailing->setAccessibleDescription("Trim trailing silence from the recording to reduce latency");
 
     auto *form = new QFormLayout;
-    form->addRow("Language:", m_language);
-    form->addRow("Audio source:", m_source);
-    form->addRow("Insert mode:", m_insertMode);
-    form->addRow("Paste shortcut:", m_pasteCombo);
-    form->addRow("Capture tail:", m_tailMs);
-    form->addRow("Min. recording:", m_minMs);
+    auto *langLabel = new QLabel("Language:", this);
+    langLabel->setBuddy(m_language);
+    form->addRow(langLabel, m_language);
+    auto *sourceLabel = new QLabel("Audio source:", this);
+    sourceLabel->setBuddy(m_source);
+    form->addRow(sourceLabel, m_source);
+    auto *modeLabel = new QLabel("Insert mode:", this);
+    modeLabel->setBuddy(m_insertMode);
+    form->addRow(modeLabel, m_insertMode);
+    auto *pasteLabel = new QLabel("Paste shortcut:", this);
+    pasteLabel->setBuddy(m_pasteCombo);
+    form->addRow(pasteLabel, m_pasteCombo);
+    auto *tailLabel = new QLabel("Capture tail:", this);
+    tailLabel->setBuddy(m_tailMs);
+    form->addRow(tailLabel, m_tailMs);
+    auto *minLabel = new QLabel("Min. recording:", this);
+    minLabel->setBuddy(m_minMs);
+    form->addRow(minLabel, m_minMs);
     form->addRow("", m_beep);
     form->addRow("", m_notify);
     form->addRow("", m_capitalize);
@@ -137,35 +154,42 @@ bool SettingsWin::save() {
 
     const QString path = configPath();
     QDir().mkpath(QFileInfo(path).dir().path());
-    QFile f(path);
-    if (!f.open(QIODevice::ReadWrite | QIODevice::Text)) {
-        QMessageBox::warning(this, "WisprFlow", "Cannot write " + path);
-        return false;
-    }
-    QTextStream io(&f);
+
+    // Read existing file to preserve unknown keys/comments
     QStringList kept;
     QSet<QString> written;
-    while (!io.atEnd()) {
-        QString line = io.readLine();
-        const int eq = line.indexOf('=');
-        if (eq > 0) {
-            const QString key = line.left(eq).trimmed();
-            if (updates.contains(key)) {
-                kept << key + " = " + updates[key];
-                written.insert(key);
-                continue;
+    QFile existing(path);
+    if (existing.exists() && existing.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&existing);
+        while (!in.atEnd()) {
+            QString line = in.readLine();
+            const int eq = line.indexOf('=');
+            if (eq > 0) {
+                const QString key = line.left(eq).trimmed();
+                if (updates.contains(key)) {
+                    kept << key + " = " + updates[key];
+                    written.insert(key);
+                    continue;
+                }
             }
+            kept << line;
         }
-        kept << line;
+        existing.close();
     }
     for (auto it = updates.cbegin(); it != updates.cend(); ++it)
         if (!written.contains(it.key()))
             kept << it.key() + " = " + it.value();
 
-    f.resize(0);
-    f.seek(0);
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "WisprFlow", "Cannot write " + path + ": " + f.errorString());
+        return false;
+    }
     QTextStream out(&f);
     out << kept.join('\n') << '\n';
-    f.close();
+    if (!f.commit()) {
+        QMessageBox::warning(this, "WisprFlow", "Cannot commit " + path + ": " + f.errorString());
+        return false;
+    }
     return true;
 }

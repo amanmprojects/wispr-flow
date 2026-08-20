@@ -17,6 +17,7 @@ public:
     void addLevel(int v);
     void setBackend(const QString &backend) { m_backend = backend; }
     void setTranscribed(const QString &text) { m_lastText = text; }
+    QSize sizeHint() const override;
 
 signals:
     void openDebug();
@@ -29,6 +30,7 @@ protected:
     void mousePressEvent(QMouseEvent *) override;
     void mouseDoubleClickEvent(QMouseEvent *) override;
     void contextMenuEvent(QContextMenuEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
 
 private:
     QString m_state = "offline";

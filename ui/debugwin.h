@@ -4,6 +4,7 @@
 #include <QWidget>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include "wfclient.h"
 
 class DebugWin : public QWidget {
@@ -21,5 +22,7 @@ private:
     WfClient *m_client;
     QPlainTextEdit *m_text;
     QLabel *m_info;
+    QPushButton *m_retr = nullptr;
+    QPushButton *m_play = nullptr;
     DoneInfo m_last;
 };

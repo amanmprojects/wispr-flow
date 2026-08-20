@@ -20,13 +20,18 @@ Description=WisprFlow dictation daemon
 # start only after the graphical session imported its environment
 # (WAYLAND_DISPLAY etc.) - the daemon needs it for wl-copy/notify-send
 After=graphical-session.target
+Wants=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/wispr-flow
+# %h expands to $HOME; quoted so paths with spaces are safe
+ExecStart="%h/.local/bin/wispr-flow"
 Restart=on-failure
 RestartSec=2
+# WAYLAND_DISPLAY is usually imported by graphical-session.target, but on
+# some compositors it may need an explicit fallback. Uncomment if needed:
+# Environment=WAYLAND_DISPLAY=wayland-0
 # stdout/stderr go to the journal (default for user services)
 
 [Install]

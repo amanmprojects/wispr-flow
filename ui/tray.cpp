@@ -1,4 +1,7 @@
 #include "tray.h"
+#include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QPainter>
 #include <QPainterPath>
 #include <QtMath>
@@ -34,9 +37,15 @@ Tray::Tray(QObject *parent) : QObject(parent) {
 void Tray::setState(const QString &state) {
     m_state = state;
     m_anim.stop();
+    bool reduced = qEnvironmentVariableIsSet("WISPR_REDUCED_MOTION") || qEnvironmentVariableIntValue("WISPR_REDUCED_MOTION");
+    if (reduced) { render(); return; }
     if (state == "recording") m_anim.start(350);   // red pulse
     else if (state == "processing") m_anim.start(70); // spinner
     render();
+}
+
+void Tray::setVisible(bool v) {
+    if (v) m_tray.show(); else m_tray.hide();
 }
 
 static void paintMic(QPainter &p, const QColor &col) {
@@ -56,7 +65,14 @@ static void paintMic(QPainter &p, const QColor &col) {
 }
 
 void Tray::render() {
-    QPixmap pm(S, S);
+    qreal dpr = 1.0;
+    if (auto *screen = QGuiApplication::primaryScreen()) dpr = screen->devicePixelRatio();
+    else if (qApp) dpr = qApp->devicePixelRatio();
+    if (dpr < 1.0) dpr = 1.0;
+
+    const int phys = qRound(S * dpr);
+    QPixmap pm(phys, phys);
+    pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
@@ -91,14 +107,16 @@ void Tray::render() {
     p.end();
 
     QString tip = "WisprFlow";
-    if (m_state == "recording") tip += " — recording… release Ctrl+Win to finish";
-    else if (m_state == "processing") tip += " — transcribing…";
-    else if (m_state == "offline") tip += " — daemon offline";
-    else tip += " — hold Ctrl+Win to dictate";
+    if (m_state == "recording") tip += u8" — recording… release Ctrl+Win to finish";
+    else if (m_state == "processing") tip += u8" — transcribing…";
+    else if (m_state == "offline") tip += u8" — daemon offline";
+    else tip += u8" — hold Ctrl+Win to dictate";
     if (!m_backend.isEmpty()) tip += "\nbackend: " + m_backend;
     if (!m_lastText.isEmpty())
         tip += "\nlast: " + m_lastText.left(60) + (m_lastText.size() > 60 ? "…" : "");
 
     m_tray.setIcon(QIcon(pm));
     m_tray.setToolTip(tip);
+    // AccessibleName is conveyed via tooltip; QSystemTrayIcon has no QWidget accessible,
+    // but tooltip is exposed to screen readers via the shell.
 }

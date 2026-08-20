@@ -57,8 +57,33 @@ int main(int argc, char **argv) {
     Osd osd;
     Tray tray;
     Pill pill; // fallback: only used where there is no system tray
-    const bool useTray = QSystemTrayIcon::isSystemTrayAvailable();
+    bool useTray = QSystemTrayIcon::isSystemTrayAvailable();
+    QString currentState = "offline";
     if (!useTray) pill.show();
+    else tray.setVisible(true);
+    // keep tray/pill state in sync initially
+    if (useTray) tray.setState(currentState); else pill.setState(currentState);
+
+    // poll for tray availability (e.g. panel starts late)
+    auto *trayPoll = new QTimer(&app);
+    trayPoll->setInterval(2000);
+    QObject::connect(trayPoll, &QTimer::timeout, &app, [&] {
+        bool now = QSystemTrayIcon::isSystemTrayAvailable();
+        if (now == useTray) return;
+        useTray = now;
+        if (useTray) {
+            // tray became available: hide pill, show tray with current state
+            pill.hide();
+            tray.setVisible(true);
+            tray.setState(currentState);
+        } else {
+            tray.setVisible(false);
+            pill.setState(currentState);
+            pill.show();
+            pill.raise();
+        }
+    });
+    trayPoll->start();
 
     DebugWin debug(&client);
     SettingsWin settings;
@@ -67,6 +92,7 @@ int main(int argc, char **argv) {
 
     // --- state -> indicator + Plasma OSD (the shell draws the popup) --------
     auto setState = [&](const QString &s) {
+        currentState = s;
         if (useTray) tray.setState(s); else pill.setState(s);
     };
     auto setBackend = [&](const QString &s) {
@@ -126,17 +152,15 @@ int main(int argc, char **argv) {
             if (QFile::exists(daemonPath())) QProcess::startDetached(daemonPath(), QStringList());
         });
     };
-    if (useTray) {
-        QObject::connect(&tray, &Tray::openDebug, &app, openDebug);
-        QObject::connect(&tray, &Tray::openSettings, &app, openSettings);
-        QObject::connect(&tray, &Tray::requestRestartDaemon, &app, restartDaemon);
-        QObject::connect(&tray, &Tray::requestQuit, &app, &QApplication::quit);
-    } else {
-        QObject::connect(&pill, &Pill::openDebug, &app, openDebug);
-        QObject::connect(&pill, &Pill::openSettings, &app, openSettings);
-        QObject::connect(&pill, &Pill::requestRestartDaemon, &app, restartDaemon);
-        QObject::connect(&pill, &Pill::requestQuit, &app, &QApplication::quit);
-    }
+    // connect both tray and pill regardless of initial useTray, so switching works
+    QObject::connect(&tray, &Tray::openDebug, &app, openDebug);
+    QObject::connect(&tray, &Tray::openSettings, &app, openSettings);
+    QObject::connect(&tray, &Tray::requestRestartDaemon, &app, restartDaemon);
+    QObject::connect(&tray, &Tray::requestQuit, &app, &QApplication::quit);
+    QObject::connect(&pill, &Pill::openDebug, &app, openDebug);
+    QObject::connect(&pill, &Pill::openSettings, &app, openSettings);
+    QObject::connect(&pill, &Pill::requestRestartDaemon, &app, restartDaemon);
+    QObject::connect(&pill, &Pill::requestQuit, &app, &QApplication::quit);
     QObject::connect(&settings, &SettingsWin::restartDaemon, &app, restartDaemon);
 
     client.start(sockPath());

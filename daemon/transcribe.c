@@ -111,7 +111,7 @@ char *tr_run(Transcribe *t, const Config *cfg,
 
     // int16 -> float in [-1, 1]
     float *f = malloc(n * sizeof(float));
-    if (!f) return NULL;
+    if (!f) { snprintf(t->err, sizeof(t->err), "out of memory"); return NULL; }
     for (size_t i = 0; i < n; i++) f[i] = (float)samples[i] / 32768.0f;
 
     struct whisper_full_params p = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -171,7 +171,7 @@ char *tr_run(Transcribe *t, const Config *cfg,
     for (int i = 0; i < nseg; i++)
         cap += strlen(whisper_full_get_segment_text(t->ctx, i)) + 2;
     char *out = malloc(cap);
-    if (!out) return NULL;
+    if (!out) { snprintf(t->err, sizeof(t->err), "out of memory"); return NULL; }
     out[0] = 0;
     for (int i = 0; i < nseg; i++) {
         const char *seg = whisper_full_get_segment_text(t->ctx, i);
@@ -181,7 +181,10 @@ char *tr_run(Transcribe *t, const Config *cfg,
         strcat(out, seg);
         if (i + 1 < nseg) strcat(out, " ");
     }
-    return clean_text(out, cfg->capitalize);
+    char *cleaned = clean_text(out, cfg->capitalize);
+    free(out);
+    if (!cleaned) snprintf(t->err, sizeof(t->err), "out of memory");
+    return cleaned;
 }
 
 // --- WAV loading ----------------------------------------------------------

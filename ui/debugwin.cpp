@@ -9,6 +9,8 @@
 #include <QUrl>
 #include <QDir>
 #include <QMessageBox>
+#include <QStandardPaths>
+#include <QFileInfo>
 
 DebugWin::DebugWin(WfClient *client) : m_client(client) {
     setWindowTitle("WisprFlow — last dictation");
@@ -22,16 +24,29 @@ DebugWin::DebugWin(WfClient *client) : m_client(client) {
     m_info->setTextFormat(Qt::RichText);
     m_info->setWordWrap(true);
 
-    auto *play = new QPushButton("▶ Replay recording", this);
-    auto *retr = new QPushButton("↻ Retranscribe", this);
-    retr->setToolTip("Runs the model again on the exact recording used — "
+    m_play = new QPushButton("▶ Replay recording", this);
+    m_retr = new QPushButton("↻ Retranscribe", this);
+    m_retr->setToolTip("Runs the model again on the exact recording used — "
                      "if the ending differs, the cut is in the recording, not the model");
     auto *copy = new QPushButton("Copy text", this);
     auto *folder = new QPushButton("Open folder", this);
 
+    // disable retranscribe when offline
+    m_retr->setEnabled(m_client->isConnected());
+    if (!m_client->isConnected()) m_retr->setToolTip("Daemon offline — reconnecting…");
+    connect(m_client, &WfClient::hello, this, [this](const QByteArray&) {
+        m_retr->setEnabled(true);
+        m_retr->setToolTip("Runs the model again on the exact recording used — "
+                         "if the ending differs, the cut is in the recording, not the model");
+    });
+    connect(m_client, &WfClient::disconnected, this, [this]{
+        m_retr->setEnabled(false);
+        m_retr->setToolTip("Daemon offline — reconnecting…");
+    });
+
     auto *btns = new QHBoxLayout;
-    btns->addWidget(play);
-    btns->addWidget(retr);
+    btns->addWidget(m_play);
+    btns->addWidget(m_retr);
     btns->addWidget(copy);
     btns->addWidget(folder);
     btns->addStretch();
@@ -41,15 +56,31 @@ DebugWin::DebugWin(WfClient *client) : m_client(client) {
     lay->addWidget(m_info);
     lay->addLayout(btns);
 
-    connect(play, &QPushButton::clicked, this, [this] {
+    connect(m_play, &QPushButton::clicked, this, [this] {
         if (m_last.path.isEmpty()) return;
-        if (!QProcess::startDetached("paplay", QStringList{m_last.path})) {
-            QMessageBox::warning(this, "WisprFlow",
-                                 "Could not start paplay — install pulseaudio-utils.");
-        }
+        auto tryPlay = [&](const QString &exe) -> bool {
+            if (exe.isEmpty()) return false;
+            return QProcess::startDetached(exe, QStringList{m_last.path});
+        };
+        QString paplay = QStandardPaths::findExecutable("paplay");
+        if (!paplay.isEmpty() && tryPlay(paplay)) return;
+        QString pwplay = QStandardPaths::findExecutable("pw-play");
+        if (!pwplay.isEmpty() && tryPlay(pwplay)) return;
+        QString aplay = QStandardPaths::findExecutable("aplay");
+        if (!aplay.isEmpty() && tryPlay(aplay)) return;
+        // fallback: try bare names via PATH even if not found by findExecutable
+        if (tryPlay("paplay")) return;
+        if (tryPlay("pw-play")) return;
+        if (tryPlay("aplay")) return;
+        QMessageBox::warning(this, "WisprFlow",
+                             "Could not start audio player — install pulseaudio-utils, pipewire or alsa-utils.");
     });
-    connect(retr, &QPushButton::clicked, this, [this] {
+    connect(m_retr, &QPushButton::clicked, this, [this] {
         if (m_last.path.isEmpty()) return;
+        if (!m_client->isConnected()) {
+            m_retr->setToolTip("Daemon offline — cannot retranscribe");
+            return;
+        }
         m_client->sendCommand("{\"cmd\":\"retranscribe\"}");
     });
     connect(copy, &QPushButton::clicked, this, [this] {
@@ -63,7 +94,11 @@ DebugWin::DebugWin(WfClient *client) : m_client(client) {
 
 void DebugWin::showDone(const DoneInfo &info) {
     m_last = info;
-    if (!info.text.isEmpty()) m_text->setPlainText(info.text);
+    if (info.noSpeech || info.text.isEmpty()) {
+        m_text->clear();
+    } else {
+        m_text->setPlainText(info.text);
+    }
 
     QString html = "<span style='color:#9ca3af'>";
     html += QString("recording <b>%1 s</b> · whisper <b>%2 ms</b> · ")

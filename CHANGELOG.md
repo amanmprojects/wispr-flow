@@ -51,6 +51,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Socket client disconnected on overlong command line**: a read into a full
   buffer (no newline within `MAX_LINE`) made `read(fd, …, 0)` return 0,
   mistaken for EOF. The buffer is now reset instead of disconnecting.
+- **Transcription leak**: `tr_run` never freed the raw `out` buffer after `clean_text` (every dictation leaked ~256 B+text). Now frees `out` and sets `t->err` on malloc failure.
+- **`pthread_mutex_t` move UB on client disconnect**: `memmove` of `Client` copied the mutex (POSIX UB, deadlock). Now shifts `fd`/`len`/`buf` only, mutex stays in place.
+- **Deadlock via `broadcast_lock` held across `read()`**: socket thread now snapshots fds, reads without lock, re-locks to update buffers; shared flags protected by lock and re-queued retranscribe.
+- **Retranscribe lost when busy**: request during `PROCESSING` was consumed and dropped. Now re-queued via `wf_socket_requeue_retranscribe` and retried when idle.
+- **JSON escaping incomplete**: `json_escape` now handles `\b \f \n \r \t` and `\u00XX` for `<0x20`; buffers enlarged (text 16k, line 32k) with truncation warnings. `status_json` rebuilt on every state transition.
+- **`level_from_rms` overflow and `append` cap overflow**: use `int64` and `SIZE_MAX` guard.
+- **`hotkey` Ctrl/Meta handling too strict + stale poll**: accepts any left/right Ctrl/Meta, forces rescan on `POLLERR|HUP|NVAL`.
+- **`config` HOME handling**: `expand_tilde` and `load` fall back to `/tmp` when `HOME` unset (consistent with `make_state_dir`); comment-strip respects quoted `#`.
+- **Clipboard X11 fallback**: `wl-copy`/`wl-paste` tried first, then `xclip`/`xsel`; paste and restore both handle Wayland and X11.
+- **UI JSON whitespace brittleness**: `jsonGet*` now skips whitespace around `:` and handles `\b \f \uXXXX`.
+- **UI offline command loss**: `WfClient` now queues commands while disconnected and flushes on connect; hello has 3 s timeout warning.
+- **OSD fallback too narrow**: now checks `sessionBus.isConnected()`, timeout, any non-Reply, tries `notify-send` then `QSystemTrayIcon::showMessage`.
+- **Tray single-sample stale**: `isSystemTrayAvailable()` now polled every 2 s; pill ↔ tray switches dynamically.
+- **Tray/pill HiDPI blur and fixed size**: HiDPI `devicePixelRatio` scaling, pill uses `sizeHint()` (not 184×42), stops animation when idle/offline.
+- **Pill not keyboard-accessible**: now `StrongFocus`, Enter/Space/Shift+F10, AccessibleName/Description, `QAccessible::StateChanged`.
+- **Settings corruption**: uses `QSaveFile` atomic write, buddy-linked labels, AccessibleDescriptions.
+- **Debug replay paplay-only**: now `paplay` → `pw-play` → `aplay` fallback; retranscribe button disabled when offline.
+- **Build: hardcoded CUDA arch 89-real**: now auto-detects via `nvidia-smi` or builds multi-arch 75/80/86/89/90 with PTX fallback; submodule check added.
+- **Install: Arch-only**: `setup.sh` now distro-aware (pacman/apt/dnf/zypper), correct package names, creates `/etc/udev/rules.d/60-uinput.rules`, adds `input`+`uinput` groups, handles multi CUDA homes (`/opt/cuda` `/usr/local/cuda` `/usr/lib/cuda`), `install.sh` respects `XDG_*_HOME`, quoted `Exec`, `TryExec`, disk-space check, `curl --retry 3`/`wget`/`hf` fallbacks with size verify, `Makefile`/`CMakeLists` use `PREFIX/DESTDIR` and `install()` targets.
 
 ### Added
 

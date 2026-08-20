@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QByteArray>
 #include <QLocalSocket>
+#include <QTimer>
+#include <QQueue>
 
 struct DoneInfo {
     bool ok = false;
@@ -38,8 +40,15 @@ private slots:
     void retryConnect();
 
 private:
+    void scheduleRetry();
+    void flushQueue();
+
     QLocalSocket m_sock;
     QString m_path;
     bool m_connected = false;
     QByteArray m_buf;
+    QTimer m_retryTimer;
+    QTimer m_helloTimer;
+    QQueue<QByteArray> m_queue;
+    bool m_helloReceived = false;
 };

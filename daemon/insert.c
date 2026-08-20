@@ -75,14 +75,20 @@ static int parse_combo(const char *combo, int mods[4], int *nmods, int *key) {
 // ---------------------------------------------------------------------------
 
 static int set_clipboard(const char *text, char *errbuf, size_t errsz) {
-    const char *argv[] = { "wl-copy", NULL };
-    int rc = wf_run_pipe(argv, text, strlen(text));
-    if (rc != 0) {
-        snprintf(errbuf, errsz,
-                 "wl-copy failed (exit %d) - is wl-clipboard installed and WAYLAND_DISPLAY set?", rc);
-        return -1;
-    }
-    return 0;
+    // Wayland first: wl-copy (supports all unicode, no size limit)
+    const char *wl_argv[] = { "wl-copy", "--no-newline", NULL };
+    int rc = wf_run_pipe(wl_argv, text, strlen(text));
+    if (rc == 0) return 0;
+    // X11 fallback: xclip or xsel
+    const char *xclip_argv[] = { "xclip", "-selection", "clipboard", "-in", NULL };
+    rc = wf_run_pipe(xclip_argv, text, strlen(text));
+    if (rc == 0) return 0;
+    const char *xsel_argv[] = { "xsel", "--clipboard", "--input", NULL };
+    rc = wf_run_pipe(xsel_argv, text, strlen(text));
+    if (rc == 0) return 0;
+    snprintf(errbuf, errsz,
+             "wl-copy failed (exit %d) and xclip/xsel fallbacks failed — is wl-clipboard or xclip installed and DISPLAY/WAYLAND_DISPLAY set?", rc);
+    return -1;
 }
 
 static int send_paste_combo(const Config *cfg, char *errbuf, size_t errsz) {
@@ -148,11 +154,21 @@ static int insert_paste(const Config *cfg, const char *text, char *errbuf, size_
     size_t oldlen = 0;
 
     if (cfg->restore_clipboard) {
-        const char *argv[] = { "wl-paste", "-n", "--no-newline", NULL };
-        int rc = wf_run_capture(argv, &old, &oldlen);
-        if (rc != 0) { free(old); old = NULL; } // nothing to restore
-        else if (oldlen > 4 * 1024 * 1024) { free(old); old = NULL; }
+        const char *wl_argv[] = { "wl-paste", "-n", "--no-newline", NULL };
+        int rc = wf_run_capture(wl_argv, &old, &oldlen);
+        if (rc != 0 || oldlen > 4 * 1024 * 1024) {
+            free(old); old = NULL; oldlen = 0;
+            const char *xclip_argv[] = { "xclip", "-selection", "clipboard", "-o", NULL };
+            rc = wf_run_capture(xclip_argv, &old, &oldlen);
+            if (rc != 0 || oldlen > 4 * 1024 * 1024) {
+                free(old); old = NULL; oldlen = 0;
+                const char *xsel_argv[] = { "xsel", "--clipboard", "--output", NULL };
+                rc = wf_run_capture(xsel_argv, &old, &oldlen);
+                if (rc != 0 || oldlen > 4 * 1024 * 1024) { free(old); old = NULL; }
+            }
+        }
     }
+
 
     if (set_clipboard(text, errbuf, errsz) != 0) { free(old); return -1; }
     usleep(200 * 1000); // let the clipboard propagate

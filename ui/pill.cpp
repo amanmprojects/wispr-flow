@@ -2,21 +2,27 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QGuiApplication>
 #include <QWindow>
+#include <QScreen>
 #include <QFontMetrics>
+#include <QAccessible>
 #include <QtMath>
 
 Pill::Pill() {
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground);
-    setFixedSize(184, 42);
+    setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName("WisprFlow status pill");
+    setAccessibleDescription("Shows dictation state, press Enter or Space to open menu, Shift+F10 for context menu");
 
     m_menu.addAction(QIcon(), "Last dictation…", this, [this] { emit openDebug(); });
     m_menu.addAction(QIcon(), "Settings…", this, [this] { emit openSettings(); });
     m_menu.addSeparator();
     m_menu.addAction(QIcon(), "Restart daemon", this, [this] { emit requestRestartDaemon(); });
     m_menu.addAction(QIcon(), "Quit", this, [this] { emit requestQuit(); });
+    resize(sizeHint());
 
     connect(&m_anim, &QTimer::timeout, this, [this] {
         m_spinAngle = (m_spinAngle + 12) % 360;
@@ -24,10 +30,42 @@ Pill::Pill() {
         m_peak = m_peak * 0.86 + 0.14 * (m_levels.empty() ? 0 : m_levels.back());
         update();
     });
-    m_anim.start(30);
+    // timer starts only when recording/processing (controlled by setState)
 }
 
-void Pill::setState(const QString &state) { m_state = state; update(); }
+QSize Pill::sizeHint() const {
+    QFontMetrics fm(font());
+    // widest state text
+    int w1 = fm.horizontalAdvance("Hold Ctrl+Win");
+    int w2 = fm.horizontalAdvance("Transcribing…");
+    int w3 = fm.horizontalAdvance("Listening…");
+    int w4 = fm.horizontalAdvance("daemon offline");
+    int textW = qMax(qMax(w1, w2), qMax(w3, w4));
+    qreal dpr = devicePixelRatioF();
+    if (qFuzzyCompare(dpr, 1.0)) {
+        if (auto *s = QGuiApplication::primaryScreen()) dpr = s->devicePixelRatio();
+        if (dpr < 1.0) dpr = 1.0;
+    }
+    // icon area ~ 32px + spacing 8 + padding 20
+    int w = textW + 64 + 24;
+    int h = qMax(42, fm.height() + 24);
+    // ensure minimum width for waveform etc.
+    w = qMax(w, 184);
+    Q_UNUSED(dpr);
+    return QSize(w, h);
+}
+
+void Pill::setState(const QString &state) {
+    m_state = state;
+    bool reduced = qEnvironmentVariableIsSet("WISPR_REDUCED_MOTION");
+    if (reduced) { if (m_anim.isActive()) m_anim.stop(); }
+    else if (state == "recording" || state == "processing") {
+        if (!m_anim.isActive()) m_anim.start(30);
+    } else {
+        if (m_anim.isActive()) m_anim.stop();
+    }
+    update();
+}
 
 void Pill::addLevel(int v) {
     m_levels.push_back(v);
@@ -129,7 +167,8 @@ void Pill::paintEvent(QPaintEvent *) {
         p.drawText(QRectF(textX, 0, width() - textX - 8, height()),
                    Qt::AlignVCenter | Qt::AlignLeft, "Transcribing…");
     } else if (m_state == "offline") {
-        p.setPen(QColor(255, 255, 255, 90));
+        // improved contrast for offline text (was 90 alpha)
+        p.setPen(QColor(255, 255, 255, 165));
         p.drawText(QRectF(textX, 0, width() - textX - 8, height()),
                    Qt::AlignVCenter | Qt::AlignLeft, "daemon offline");
     } else { // idle
@@ -160,4 +199,25 @@ void Pill::mouseDoubleClickEvent(QMouseEvent *e) {
 
 void Pill::contextMenuEvent(QContextMenuEvent *e) {
     m_menu.exec(e->globalPos());
+}
+
+void Pill::keyPressEvent(QKeyEvent *e) {
+    if (e->key() == Qt::Key_Escape) {
+        hide();
+        e->accept();
+        return;
+    }
+    if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return || e->key() == Qt::Key_Space) {
+        // Enter/Space opens debug/dashboard (primary action)
+        emit openDebug();
+        e->accept();
+        return;
+    }
+    if ((e->key() == Qt::Key_F10 && e->modifiers() & Qt::ShiftModifier) || e->key() == Qt::Key_Menu) {
+        // Shift+F10 / Menu key opens context menu
+        m_menu.exec(mapToGlobal(rect().center()));
+        e->accept();
+        return;
+    }
+    QWidget::keyPressEvent(e);
 }

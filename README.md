@@ -26,12 +26,11 @@ X11's `XGrabKey` does not work globally under Wayland. This daemon instead:
 
 ## Requirements
 
-* Arch Linux (pacman instructions; adapt for other distros)
-* NVIDIA GPU + driver (tested on RTX 4060), CUDA toolkit for the GPU build
-* PipeWire/PulseAudio with a microphone
-* `wl-clipboard` (clipboard access for the paste step)
-* KDE Plasma or any Wayland/X11 session
-
+* Linux with systemd user session (Arch, Debian/Ubuntu, Fedora, openSUSE tested; `setup.sh` auto-detects pacman/apt/dnf/zypper)
+* NVIDIA GPU + driver (tested on RTX 4060), CUDA toolkit for GPU build (falls back to CPU if absent)
+* PipeWire/PulseAudio with a microphone (`pactl` or `wpctl` for monitor source)
+* `wl-clipboard` (Wayland) or `xclip`/`xsel` (X11) — clipboard for paste; `wl-copy`/`wl-paste` tried first
+* KDE Plasma or any Wayland/X11 session (GNOME, Sway, etc. work; tray fallback pill on no-tray desktops)
 ## Install
 
 ```sh
@@ -43,11 +42,9 @@ sudo ./scripts/setup.sh
 ```
 
 `install.sh` builds whisper.cpp + the daemon, downloads the
-`large-v3-turbo` model (~0.6 GB) into `models/`, installs the binary to
-`~/.local/bin`, writes a default config and a KDE autostart entry, and
+`large-v3-turbo` model (~1.6 GB, `ggml-large-v3-turbo-q5_0.bin`) into `models/` and symlinks to `~/.local/share/wispr-flow/` (XDG-aware), installs binaries to `$XDG_BIN_HOME` (`~/.local/bin` default), writes a default config to `$XDG_CONFIG_HOME/wispr-flow/config` and a KDE autostart entry, and
 installs a `systemd --user` service for the daemon (journald logging,
-auto-restart on crash — see `scripts/wispr-flow.service`).
-
+auto-restart on crash — see `scripts/wispr-flow.service`). `setup.sh` is distro-aware (pacman/apt/dnf/zypper), creates `/etc/udev/rules.d/60-uinput.rules` and adds user to `input`+`uinput` groups. `uninstall.sh` reverses it.
 Start it once to test:
 
 ```sh
@@ -146,29 +143,16 @@ options. Highlights:
 
 ## Troubleshooting
 
-* **`wl-copy failed`** — wl-clipboard missing (`sudo pacman -S wl-clipboard`)
-  or `WAYLAND_DISPLAY` unset (run the daemon from your desktop session, not
-  over SSH).
-* **`cannot send keys: uinput unavailable`** — the daemon needs write access
-  to `/dev/uinput` (built-in virtual keyboard). On most systems it is
-  already writable; if not, run `sudo ./scripts/setup.sh` once and
-  re-login (uinput group + udev rule). `ydotool` is tried automatically as
-  a fallback.
-* **CUDA not used** — the daemon prints its backend at startup
-  (`AVX=1 … CUDA=1`). Missing `nvcc` → CPU fallback; run
-  `sudo ./scripts/setup.sh` then `./scripts/build.sh`.
-* **No audio captured** — `pactl list sources short` to find your mic;
-  set `source` accordingly.
-* **`no speech detected`** — whisper may reject very short or very noisy
-  clips; speak a little longer or check the mic level.
-* **Debugging** — `WISPR_SAVE_REC=/tmp/rec.wav wispr-flow` saves every
-  raw recording, and `bin/wispr-inject ctrl+win hold` simulates the hotkey
-  gesture for scripted tests. Daemon logs go to the journal when run as a
-  service: `journalctl --user -u wispr-flow -f`.
-* **Transcript appears in the wrong app** — the paste goes to whichever
-  window has focus; make sure it accepts Ctrl+V (a few terminals don't —
-  set `insert_mode = type` or `paste_combo = ctrl+shift+v`).
-
+* **`wl-copy failed`** — clipboard tools missing: Wayland needs `wl-clipboard` (`pacman -S wl-clipboard` / `apt install wl-clipboard` / `dnf install wl-clipboard`), X11 needs `xclip` or `xsel`. Also requires `WAYLAND_DISPLAY` or `DISPLAY` from desktop session (not SSH).
+* **`cannot send keys: uinput unavailable`** — daemon needs `/dev/uinput` (built-in virtual keyboard). Run `sudo ./scripts/setup.sh` once (creates `/etc/udev/rules.d/60-uinput.rules`, adds `uinput`+`input` groups) and re-login. `ydotool` is automatic fallback.
+* **Hotkey not detected (0 devices)** — need `input` group for `/dev/input/event*`: `sudo ./scripts/setup.sh` adds it. Check `groups` and re-login.
+* **`no speech detected`** — whisper may reject very short or very noisy clips; speak longer or check mic level.
+* **CUDA not used** — daemon prints backend (`AVX=1 … CUDA=1`). Missing `nvcc` → CPU fallback; run `sudo ./scripts/setup.sh` then `./scripts/build.sh` (`GGML_NATIVE=OFF` for portable binaries). `build.sh` auto-detects arch via `nvidia-smi` or builds multi-arch 75/80/86/89/90.
+* **No audio captured** — `pactl list sources short` or `wpctl status`; set `source` in `~/.config/wispr-flow/config`.
+* **Clipboard restore or paste timing** — increase `stop_tail_ms` or check compositor latency; large texts use `wl-copy` which may need ~200 ms.
+* **UI icons blurry or small** — HiDPI is auto-scaled via `devicePixelRatio`; ensure Qt 6.2+ and panel scaling. Set `WISPR_REDUCED_MOTION=1` to disable spinner/pulse.
+* **Debugging** — `bin/wispr-inject ctrl+win hold` simulates hotkey headlessly; daemon logs to journal (`journalctl --user -u wispr-flow -f`) or stdout when run standalone.
+* **Transcript appears in wrong app** — paste goes to focused window; some terminals don't accept Ctrl+V — set `insert_mode = type` or `paste_combo = ctrl+shift+v`.
 ## Project layout
 
 ```
